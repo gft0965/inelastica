@@ -475,6 +475,7 @@ class DynamicalMatrix(object):
         # Normalize eigenvectors
         U = evec.copy()
         for i in range(3*dyn):
+	    # do we need this normalization?
             U[i] = U[i]/(N.dot(N.conjugate(U[i]), U[i])**0.5)
         # Sort in order descending mode energies
         #hw = hw[::-1] # reverse array
@@ -501,13 +502,35 @@ class DynamicalMatrix(object):
             # Eigenvectors after division by sqrt(mass)
             Udisp[:, i] = U[:, i]/self.Masses[i/3]**.5
 
-        # Compute displacement vectors scaled for the characteristic length
-        Ucl = N.empty_like(U)
+
+	##################################################
+	eV2Angkgsec = (2.99792458**2)*1.783 # Ang^2*Kg/sec^2
+	hb = PC.hbar2SI/(PC.eV2Joule) # in eV*sec
+
+	# Calculate reduced mass and characteristic length for each vibrational mode
+        cll = N.zeros(3*dyn)     		# vector of characteristic lengths
+        redm = N.zeros(3*dyn)    		# vector of reduced masses
+        for ihw in range(3*dyn):
+            Utmp = (dyn**0.5)*Udisp[ihw,:]
+            inv_red_mass = 0
+            for i in range(3*dyn):
+                weight = N.dot(Utmp[i],Utmp[i])
+                inv_red_mass += weight
+	    red_mass = (inv_red_mass)**-1
+	    if hw[ihw] > 0.0:
+                K = red_mass*PC.amu2kg*(hw[ihw]/hb)**2 	# K=m*w^2 [kg/sec^2]
+                x = N.sqrt(hw[ihw]*eV2Angkgsec/K) 	# x=sqrt(hw/K) (x is in Ang)
+	    else:
+		x = 0.0
+            cll[ihw] = x.real
+            redm[ihw] = red_mass.real
+
+        # Scale real displacement vectors with respect to the characteristic length
+        Ucl = N.empty_like(Udisp)
         for j in range(3*dyn):
             for i in range(3*dyn):
-                # Eigenvectors after multiplication by characteristic length
                 if hw[j] > 0:
-                    Ucl[j, i] = U[j, i]*(1./(self.Masses[i/3]*(hw[j]/(2*PC.Rydberg2eV)))**.5)
+                    Ucl[j,i]=Udisp[j,i]/cll[j]
                 else:
                     # Characteristic length not defined for non-postive frequency
                     Ucl[j, i] = U[j, i]*0.0
@@ -528,6 +551,8 @@ class DynamicalMatrix(object):
         self.UU = UU
         self.UUdisp = UUdisp
         self.UUcl = UUcl
+        self.cl = cll
+        self.redm = redm
 
     def PrepareGradients(self, onlySdir, kpoint, DeviceFirst, DeviceLast, AbsEref, atype, TSrun=False):
         print('\nPhonons.PrepareGradients: Setting up various arrays')
@@ -654,6 +679,8 @@ class DynamicalMatrix(object):
         ### Write MKL- and xyz-files
         natoms = self.geom.natoms
         hw = self.hw
+        cl = self.cl
+        redm = self.redm
         # Write only real part of eigenvectors
         UU = self.UU.reshape(len(hw), 3*natoms).real
         UUdisp = self.UUdisp.reshape(len(hw), 3*natoms).real
@@ -663,6 +690,8 @@ class DynamicalMatrix(object):
         SIO.WriteMKLFile('%s.real-displ.mkl'%label, self.geom.anr, self.geom.xyz, hw, UUdisp, 1, natoms)
         SIO.WriteXYZFile('%s.xyz'%label, self.geom.anr, self.geom.xyz)
         WriteFreqFile('%s.freq'%label, hw)
+        WriteCLFile('%s.cl'%label, cl)
+        WriteRedMFile('%s.redm'%label, redm)
         WriteVibDOSFile('%s.Gfdos'%label, hw, type='Gaussian')
         WriteVibDOSFile('%s.Lfdos'%label, hw, type='Lorentzian')
         WriteAXSFFiles('%s.mol.axsf'%label, self.geom.xyz, self.geom.anr, hw, UU, 1, natoms)
@@ -680,12 +709,22 @@ class DynamicalMatrix(object):
         ncdf.createDimension('one', 1)
         ncdf.createDimension('xyz', 3)
         ncdf.createDimension('modes', len(hw))
+        ncdf.createDimension('char_len', len(hw))
+        ncdf.createDimension('red_m', len(hw))
         ncdf.createDimension('natoms', self.geom.natoms)
         ncdf.createDimension('dyn_atoms', len(self.DynamicAtoms))
         ncdf.createVariable('hw', 'd', ('modes',))
         ncdf.variables['hw'][:] = hw
         ncdf.variables['hw'].info = 'Phonon frequencies'
         ncdf.variables['hw'].unit = 'eV'
+        ncdf.createVariable('cl', 'd', ('char_len',))
+        ncdf.variables['cl'][:] = cl
+        ncdf.variables['cl'].info = 'Characteristic lengths'
+        ncdf.variables['cl'].unit = 'Ang'
+        ncdf.createVariable('redm', 'd', ('red_m',))
+        ncdf.variables['redm'][:] = redm
+        ncdf.variables['redm'].info = 'Reduced mass'
+        ncdf.variables['redm'].unit = 'amu'
         ncdf.createVariable('U', 'd', ('modes', 'natoms', 'xyz'))
         ncdf.variables['U'][:] = self.UU.real
         ncdf.variables['U'].info = 'Real part of the phonon eigenvectors'
@@ -794,7 +833,24 @@ def WriteFreqFile(filename, hw):
         file.write('%i  %f \n'%(i, 1000*hw[i]))
     file.close()
 
+def WriteCLFile(filename, cl):
+    print('Phonons.WriteCLFile: Writing ' + filename)
+    file = open(filename, 'w')
+    file.write('# index   characteristic length/Ang \n')
+    for i in range(len(cl)):
+        file.write('%i  %f \n'%(i, cl[i]))
+    file.close()
 
+def WriteRedMFile(filename, redm):
+    print('Phonons.WriteRedMFile: Writing ' + filename)
+    file = open(filename, 'w')
+    file.write('# index   reduced mass/amu \n')
+    for i in range(len(redm)):
+        file.write('%i  %f \n'%(i, redm[i]))
+    file.close()
+
+def WriteVibDOSFile(filename, hw, type='Gaussian'):
+    'Vibrational DOS with Gaussian or Lorentzian broadening'
 def WriteVibDOSFile(filename, hw, type='Gaussian'):
     'Vibrational DOS with Gaussian or Lorentzian broadening'
     fmax = max(hw)
@@ -896,12 +952,13 @@ def main(options):
           %(options.PBCFirst, options.PBCLast, options.PBCLast-options.PBCFirst+1))
 
     print('\nSetting array type to %s\n'%options.atype)
-
     # Build Dynamical Matrix
     DM = DynamicalMatrix(fdf, options.DynamicAtoms)
     DM.SetMasses(options.Isotopes)
+
     # Compute modes
     DM.ComputePhononModes(DM.mean)
+
     # Compute e-ph coupling
     if options.CalcCoupl:
         DM.PrepareGradients(options.onlySdir, options.kpoint, options.DeviceFirst, options.DeviceLast, options.AbsEref, options.atype)
