@@ -511,7 +511,7 @@ class DynamicalMatrix(object):
         cll = N.zeros(3*dyn)     		# vector of characteristic lengths
         redm = N.zeros(3*dyn)    		# vector of reduced masses
         for ihw in range(3*dyn):
-            Utmp = (dyn**0.5)*Udisp[ihw,:]
+            Utmp = Udisp[ihw,:]
             inv_red_mass = 0
             for i in range(3*dyn):
                 weight = N.dot(Utmp[i],Utmp[i])
@@ -528,12 +528,11 @@ class DynamicalMatrix(object):
         # Scale real displacement vectors with respect to the characteristic length
         Ucl = N.empty_like(Udisp)
         for j in range(3*dyn):
-            for i in range(3*dyn):
-                if hw[j] > 0:
-                    Ucl[j,i]=Udisp[j,i]/cll[j]
-                else:
-                    # Characteristic length not defined for non-postive frequency
-                    Ucl[j, i] = U[j, i]*0.0
+            if hw[j] > 0:
+               Ucl[j]=Udisp[j]/cll[j]
+            else:
+               # Characteristic length not defined for non-postive frequency
+               Ucl[j] = N.multiply(U[j],N.zeros(len(U[j])))
 
         # Expand vectors to full geometry
         UU = N.zeros((len(hw), self.geom.natoms, 3), N.complex)
