@@ -512,22 +512,20 @@ class DynamicalMatrix(object):
         redm = N.zeros(3*dyn)    		# vector of reduced masses
         for ihw in range(3*dyn):
             Utmp = Udisp[ihw,:]
-            inv_red_mass = 0
-            for i in range(3*dyn):
-                weight = N.dot(Utmp[i],Utmp[i])
-                inv_red_mass += weight
-	    red_mass = (inv_red_mass)**-1
+	    red_mass = (N.dot(Udisp[ihw],Udisp[ihw]))**-1
 	    if hw[ihw] > 0.0:
                 K = red_mass*PC.amu2kg*(hw[ihw]/hb)**2 	# K=m*w^2 [kg/sec^2]
                 x = N.sqrt(hw[ihw]*eV2Angkgsec/K) 	# x=sqrt(hw/K) (x is in Ang)
 	    else:
 		x = 0.0
+		red_mass = 0.0
             cll[ihw] = x.real
             redm[ihw] = red_mass.real
 
         # Scale real displacement vectors with respect to the characteristic length
         Ucl = N.empty_like(Udisp)
         for j in range(3*dyn):
+            #for i in range(3*dyn):
             if hw[j] > 0:
                Ucl[j]=Udisp[j]/cll[j]
             else:
